@@ -39,7 +39,7 @@ static const uint16_t DEFAULT_ETH_ON_MIN  = 8 * 60;    // 08:00
 static const uint16_t DEFAULT_ETH_OFF_MIN = 16 * 60;   // 16:00
 
 // --- Konfiguracja ---
-#define FW_VERSION "1.2.3"                          // zwiększaj przy każdej zmianie firmware
+#define FW_VERSION "1.2.5"                          // zwiększaj przy każdej zmianie firmware
 static const char *WEB_PASSWORD     = "12345678";   // hasło do strony (kokpitu)
 static const char *DEFAULT_HOSTNAME = "wt32-eth01";
 static const char *PORTAL_PASSWORD  = "12345678";   // hasło AP konfiguracji WiFi (min. 8 znaków)

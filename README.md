@@ -48,12 +48,15 @@ Ustalenia z 2026-10-27.
 | [platformio.ini](platformio.ini) | `espressif32@6.9.0` (Arduino core 2.0.17), płytka `wt32-eth01`, biblioteki WiFiManager i Adafruit NeoPixel |
 | [src/main.cpp](src/main.cpp) | Ethernet, WiFiManager, serwer WWW, NVS, harmonogram, NTP, dioda |
 | [src/webpage.h](src/webpage.h) | strona logowania i kokpit (responsywny, tryb ciemny, odświeżanie co 2 s) |
+| [build.ps1](build.ps1) | podbicie wersji `FW_VERSION` + kompilacja, podaje ścieżkę do `.bin` |
 | [flash.ps1](flash.ps1) | kompilacja i wgrywanie |
 | [monitor.ps1](monitor.ps1) | monitor portu szeregowego (COM3, 115200, dekoder wyjątków) |
 
 ## Wgrywanie
 
 ```powershell
+.\build.ps1              # podbija wersję (1.2.3 -> 1.2.4) i kompiluje, podaje ścieżkę .bin
+.\build.ps1 -Minor       # 1.2.3 -> 1.3.0 (-Major: 2.0.0, -NoBump: bez zmiany wersji)
 .\flash.ps1              # kompilacja + wgranie na COM3
 .\flash.ps1 -Monitor     # + monitor portu 115200
 .\flash.ps1 -Erase       # najpierw kasuje cały flash (też WiFi, MAC, nazwę, harmonogram)
@@ -118,14 +121,14 @@ Wszystkie ścieżki `/api/*` wymagają zalogowania (ciasteczko `sid`), w przeciw
   nie przed atakiem w sieci lokalnej. Token sesji jest losowy i zapisany w NVS (`sid`).
 - **OTA** korzysta z partycji `min_spiffs.csv` (dwie partycje aplikacji po 1,9 MB). Biblioteka `Update`
   sprawdza nagłówek pliku – zły plik zostanie odrzucony, a stary firmware zostaje.
-- **Wersja firmware**: ⚠️ **przy każdym buildzie podbijać** `FW_VERSION` w [src/main.cpp](src/main.cpp) (obecnie 1.2.3).
+- **Wersja firmware**: ⚠️ **przy każdym buildzie podbijać** `FW_VERSION` w [src/main.cpp](src/main.cpp) (obecnie 1.2.5).
 - **Dioda**: `NEO_GRB + NEO_KHZ800` (sprawdzone na sprzęcie – z `NEO_RGB` zielony świecił na czerwono). Gdy kolory są zamienione → `NEO_RGB`; gdy dioda nie reaguje → `NEO_KHZ400`.
 
 ## Ustawienia w kodzie ([src/main.cpp](src/main.cpp))
 
 | Stała | Domyślnie |
 |---|---|
-| `FW_VERSION` | `1.2.3` |
+| `FW_VERSION` | `1.2.5` |
 | `WEB_PASSWORD` | `12345678` |
 | `DEFAULT_HOSTNAME` | `wt32-eth01` |
 | `PORTAL_PASSWORD` | `12345678` |
