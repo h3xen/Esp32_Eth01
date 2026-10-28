@@ -29,6 +29,10 @@ Ustalenia z 2026-10-27.
 10. **Wgrywanie firmware ze strony** (OTA, plik `.bin`).
 11. **Numer wersji firmware** wyświetlany na stronie (`FW_VERSION` + data kompilacji).
 12. **Hasło do strony**: `12345678` – bez zalogowania kokpit nie jest widoczny.
+13. **Kokpit dostępny z portalu WiFiManagera** (2026-10-28) – przycisk „Panel urządzenia” w menu portalu prowadzi do
+    kokpitu (harmonogram, MAC, nazwa, OTA) pod adresem `/panel`, bez konieczności konfigurowania WiFi.
+14. **Profile ustawień** (2026-10-28) – w sekcji „Ustawienia” można zapamiętać zestaw *nazwa urządzenia + MAC*
+    pod własnym podpisem (max 10 profili, zapis w NVS urządzenia) i wczytać go przyciskiem „Wczytaj”.
 
 ## Sprzęt
 
@@ -72,12 +76,17 @@ Jeśli PowerShell blokuje skrypty: `Set-ExecutionPolicy -Scope CurrentUser Remot
 ### Pierwsze uruchomienie / konfiguracja WiFi
 - Bez zapisanej sieci startuje AP **`<hostname>-setup`** (domyślnie `wt32-eth01-setup`), hasło **`12345678`**.
 - Połączyć się telefonem → portal otworzy się sam (lub http://192.168.4.1) → wybrać sieć.
-- Portal zamyka się po **180 s**. Ethernet działa niezależnie od WiFi.
+- Portal zamyka się po **180 s**, chyba że ktoś jest połączony z AP (wtedy pozostaje aktywny). Ethernet działa niezależnie od WiFi.
+- W menu portalu przycisk **„Panel urządzenia”** → http://192.168.4.1/panel – pełny kokpit (logowanie tym samym hasłem).
+  Gdy portal jest aktywny, pod adresem IP Ethernetu też działa `/panel` (a `/` pokazuje menu portalu).
 
 ### Strona WWW
 - Adres: IP z Ethernetu lub WiFi albo `http://<hostname>.local` (mDNS).
 - Logowanie hasłem **`12345678`** (`WEB_PASSWORD`). Sesja w ciasteczku ważna 30 dni, przetrwa restart. Przycisk „Wyloguj”.
 - Wersja firmware widoczna w nagłówku i w sekcji „Urządzenie” (razem z datą kompilacji).
+- **Profile** (sekcja „Ustawienia”): wpisz podpis → „Zapisz profil” zapamiętuje bieżącą nazwę i MAC z formularza
+  (ten sam podpis = nadpisanie). „Wczytaj” wstawia wybrany profil do formularza – zastosowanie dopiero po
+  „Zapisz i uruchom ponownie”. „Usuń” kasuje profil. Profile są w NVS (klucz `cfg/profiles`), znikają przy `flash.ps1 -Erase`.
 - **Aktualizacja firmware**: wybrać `.pio/build/wt32-eth01/firmware.bin` → „Wgraj firmware” → automatyczny restart.
 - Zmiana nazwy i MAC → **zapis i restart** urządzenia.
 - Zmiana harmonogramu → zapis **bez restartu**, działa od razu.
@@ -121,14 +130,14 @@ Wszystkie ścieżki `/api/*` wymagają zalogowania (ciasteczko `sid`), w przeciw
   nie przed atakiem w sieci lokalnej. Token sesji jest losowy i zapisany w NVS (`sid`).
 - **OTA** korzysta z partycji `min_spiffs.csv` (dwie partycje aplikacji po 1,9 MB). Biblioteka `Update`
   sprawdza nagłówek pliku – zły plik zostanie odrzucony, a stary firmware zostaje.
-- **Wersja firmware**: ⚠️ **przy każdym buildzie podbijać** `FW_VERSION` w [src/main.cpp](src/main.cpp) (obecnie 1.2.5).
+- **Wersja firmware**: ⚠️ **przy każdym buildzie podbijać** `FW_VERSION` w [src/main.cpp](src/main.cpp) (obecnie 1.4.0).
 - **Dioda**: `NEO_GRB + NEO_KHZ800` (sprawdzone na sprzęcie – z `NEO_RGB` zielony świecił na czerwono). Gdy kolory są zamienione → `NEO_RGB`; gdy dioda nie reaguje → `NEO_KHZ400`.
 
 ## Ustawienia w kodzie ([src/main.cpp](src/main.cpp))
 
 | Stała | Domyślnie |
 |---|---|
-| `FW_VERSION` | `1.2.5` |
+| `FW_VERSION` | `1.4.0` |
 | `WEB_PASSWORD` | `12345678` |
 | `DEFAULT_HOSTNAME` | `wt32-eth01` |
 | `PORTAL_PASSWORD` | `12345678` |

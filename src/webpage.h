@@ -55,7 +55,7 @@ h1{font-size:20px;margin:4px 0 16px}
 .badge{display:inline-block;padding:1px 10px;border-radius:99px;color:#fff;font-family:system-ui,sans-serif!important}
 .ok{background:var(--ok)}.bad{background:var(--bad)}
 label{display:block;margin:10px 0 4px;color:var(--mut)}
-input{width:100%;padding:9px 10px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--fg);font:15px ui-monospace,Consolas,monospace}
+input,select{width:100%;padding:9px 10px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--fg);font:15px ui-monospace,Consolas,monospace}
 .card form{display:flex;flex-direction:column;flex:1}
 .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:12px}
 button{padding:9px 14px;border:0;border-radius:7px;background:var(--acc);color:#fff;font-size:14px;cursor:pointer}
@@ -67,6 +67,7 @@ small{color:var(--mut)}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 label.chk{display:flex;align-items:center;gap:8px;color:var(--fg)}
 label.chk input{width:auto}
+.prof{border-top:1px dashed var(--bd);margin-top:12px;padding-top:2px}
 progress{width:100%;height:14px;margin-top:10px;accent-color:var(--acc)}
 </style>
 </head>
@@ -126,6 +127,19 @@ progress{width:100%;height:14px;margin-top:10px;accent-color:var(--acc)}
 </div>
 </form>
 <div class="msg" id="msg"></div>
+<div class="prof">
+<label for="pr_label">Podpis profilu</label>
+<input id="pr_label" maxlength="32" placeholder="np. Biuro – switch port 12">
+<small>„Zapisz profil” zapamiętuje powyższą nazwę i MAC pod tym podpisem (max 10 profili).</small>
+<label for="pr_sel">Zapisane profile</label>
+<select id="pr_sel"></select>
+<div class="btns">
+<button type="button" class="sec" id="pr_save">Zapisz profil</button>
+<button type="button" id="pr_load">Wczytaj</button>
+<button type="button" class="sec" id="pr_del">Usuń</button>
+</div>
+<div class="msg" id="msg_pr"></div>
+</div>
 </div>
 
 <div class="card">
@@ -199,6 +213,25 @@ $('f').onsubmit=async e=>{e.preventDefault();
   if(await post('/api/config',{hostname:$('hostname').value.trim(),mac:$('mac').value.trim()},'msg'))
     setTimeout(()=>location.reload(),8000);
 };
+let profs=[];
+async function loadProfs(sel){
+  const r=await fetch('/api/profiles');if(r.status==401){location.reload();return}
+  profs=await r.json();const s=$('pr_sel');s.innerHTML='';
+  if(!profs.length)s.add(new Option('(brak zapisanych profili)',''));
+  profs.forEach((p,i)=>s.add(new Option(p.label+' — '+p.hostname+' / '+p.mac,i)));
+  const i=profs.findIndex(p=>p.label==sel);if(i>=0)s.value=i;
+  $('pr_load').disabled=$('pr_del').disabled=!profs.length;
+}
+$('pr_save').onclick=async()=>{const l=$('pr_label').value.trim();
+  if(!l){say('msg_pr',false,'Podaj podpis profilu.');return}
+  if(profs.some(p=>p.label==l)&&!confirm('Nadpisać profil „'+l+'”?'))return;
+  if(await post('/api/profiles/save',{label:l,hostname:$('hostname').value.trim(),mac:$('mac').value.trim()},'msg_pr'))loadProfs(l)};
+$('pr_load').onclick=()=>{const p=profs[$('pr_sel').value];if(!p)return;
+  $('hostname').value=p.hostname;$('mac').value=p.mac;$('pr_label').value=p.label;
+  say('msg_pr',true,'Wczytano „'+p.label+'”. Kliknij „Zapisz i uruchom ponownie”, aby zastosować.')};
+$('pr_del').onclick=async()=>{const p=profs[$('pr_sel').value];
+  if(!p||!confirm('Usunąć profil „'+p.label+'”?'))return;
+  if(await post('/api/profiles/delete',{label:p.label},'msg_pr'))loadProfs()};
 $('macdef').onclick=()=>{$('mac').value=$('macdef').dataset.mac||''};
 $('fu').onsubmit=e=>{e.preventDefault();
   const f=$('fw').files[0];if(!f)return;
@@ -214,7 +247,7 @@ $('fu').onsubmit=e=>{e.preventDefault();
 };
 $('reboot').onclick=()=>{if(confirm('Zrestartować urządzenie?'))post('/api/reboot',null,'msg_dev').then(()=>setTimeout(()=>location.reload(),8000))};
 $('wifireset').onclick=()=>{if(confirm('Skasować zapisaną sieć WiFi i uruchomić portal konfiguracyjny?'))post('/api/wifireset',null,'msg_dev')};
-refresh();setInterval(refresh,2000);
+refresh();setInterval(refresh,2000);loadProfs();
 </script>
 </body>
 </html>

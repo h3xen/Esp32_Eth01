@@ -14,6 +14,7 @@
 #include <esp_netif.h>
 #include <time.h>
 #include <Adafruit_NeoPixel.h>
+#include <vector>
 #include "webpage.h"
 
 // --- Sprzęt WT32-ETH01 (LAN8720) ---
@@ -39,7 +40,7 @@ static const uint16_t DEFAULT_ETH_ON_MIN  = 8 * 60;    // 08:00
 static const uint16_t DEFAULT_ETH_OFF_MIN = 16 * 60;   // 16:00
 
 // --- Konfiguracja ---
-#define FW_VERSION "1.2.5"                          // zwiększaj przy każdej zmianie firmware
+#define FW_VERSION "1.4.0"                          // zwiększaj przy każdej zmianie firmware
 static const char *WEB_PASSWORD     = "12345678";   // hasło do strony (kokpitu)
 static const char *DEFAULT_HOSTNAME = "wt32-eth01";
 static const char *PORTAL_PASSWORD  = "12345678";   // hasło AP konfiguracji WiFi (min. 8 znaków)
@@ -48,6 +49,7 @@ static const uint16_t PORTAL_TIMEOUT_S = 180;       // po tym czasie portal się
 Preferences prefs;
 WiFiManager wm;
 WebServer server(80);
+WebServer *web = &server;     // serwer obsługujący bieżące żądanie (nasz albo portalu WiFiManagera)
 Adafruit_NeoPixel led(LED_COUNT, LED_PIN, LED_TYPE);
 
 String hostname;
@@ -67,6 +69,14 @@ bool otaAuthorized = false;
 bool serverStarted = false;
 bool mdnsStarted = false;
 uint32_t restartAt = 0;
+
+// Profile ustawień (podpis + nazwa + MAC), zapisywane w NVS jako linie "podpis	nazwa	MAC".
+static const uint8_t MAX_PROFILES = 10;
+static const uint8_t MAX_LABEL_LEN = 32;
+struct Profile {
+    String label, host, mac;
+};
+std::vector<Profile> profiles;
 
 // ---------------------------------------------------------------- MAC utils
 
@@ -113,6 +123,15 @@ static bool validHostname(const String &h) {
     return true;
 }
 
+// Sprawdza MAC Ethernet podany przez użytkownika; zwraca opis błędu albo nullptr.
+static const char *checkEthMac(const String &s, uint8_t *out) {
+    if (!parseMac(s, out)) return "Błędny format MAC (np. AA:BB:CC:DD:EE:FF).";
+    uint8_t base[6];
+    macAdd(out, -3, base);
+    if ((out[0] & 0x01) || (base[0] & 0x01)) return "MAC musi być adresem unicast (pierwszy bajt parzysty).";
+    return nullptr;
+}
+
 // ---------------------------------------------------------------- Ustawienia
 
 static void loadSettings() {
@@ -141,6 +160,37 @@ static void loadSettings() {
 
     if (!validHostname(hostname)) hostname = DEFAULT_HOSTNAME;
     if (!customMac) memcpy(savedMac, defaultMac, 6);
+}
+
+static void loadProfiles() {
+    profiles.clear();
+    prefs.begin("cfg", true);
+    String raw = prefs.isKey("profiles") ? prefs.getString("profiles") : "";
+    prefs.end();
+    int pos = 0;
+    while (pos < (int)raw.length()) {
+        int nl = raw.indexOf('\n', pos);
+        if (nl < 0) nl = raw.length();
+        String line = raw.substring(pos, nl);
+        pos = nl + 1;
+        int t1 = line.indexOf('\t'), t2 = line.indexOf('\t', t1 + 1);
+        if (t1 < 0 || t2 < 0) continue;
+        profiles.push_back({line.substring(0, t1), line.substring(t1 + 1, t2), line.substring(t2 + 1)});
+    }
+}
+
+static void saveProfiles() {
+    String raw;
+    for (const Profile &p : profiles) raw += p.label + '\t' + p.host + '\t' + p.mac + '\n';
+    prefs.begin("cfg", false);
+    prefs.putString("profiles", raw);
+    prefs.end();
+}
+
+static int findProfile(const String &label) {
+    for (size_t i = 0; i < profiles.size(); i++)
+        if (profiles[i].label == label) return i;
+    return -1;
 }
 
 // ---------------------------------------------------------------- Czas i harmonogram
@@ -253,36 +303,41 @@ static void onNetEvent(WiFiEvent_t event) {
 
 // ---------------------------------------------------------------- WWW
 
+// Gdy działa portal WiFiManagera, kokpit jest pod /panel ("/" to menu portalu).
+static String homePath() {
+    return web == &server ? "/" : "/panel";
+}
+
 static bool isAuthed() {
-    return server.header("Cookie").indexOf("sid=" + sessionId) >= 0;
+    return web->header("Cookie").indexOf("sid=" + sessionId) >= 0;
 }
 
 // Dla API: 401, gdy brak zalogowania (strona przeładuje się do ekranu logowania).
 static bool requireAuth() {
     if (isAuthed()) return true;
-    server.send(401, "text/plain", "Wymagane logowanie.");
+    web->send(401, "text/plain", "Wymagane logowanie.");
     return false;
 }
 
 static void handleRoot() {
-    if (isAuthed()) server.send_P(200, "text/html; charset=utf-8", INDEX_HTML);
-    else server.send_P(200, "text/html; charset=utf-8", LOGIN_HTML);
+    if (isAuthed()) web->send_P(200, "text/html; charset=utf-8", INDEX_HTML);
+    else web->send_P(200, "text/html; charset=utf-8", LOGIN_HTML);
 }
 
 static void handleLogin() {
-    if (server.arg("password") == WEB_PASSWORD) {
-        server.sendHeader("Set-Cookie", "sid=" + sessionId + "; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict");
-        server.sendHeader("Location", "/");
+    if (web->arg("password") == WEB_PASSWORD) {
+        web->sendHeader("Set-Cookie", "sid=" + sessionId + "; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict");
+        web->sendHeader("Location", homePath());
     } else {
-        server.sendHeader("Location", "/?err=1");
+        web->sendHeader("Location", homePath() + "?err=1");
     }
-    server.send(303);
+    web->send(303);
 }
 
 static void handleLogout() {
-    server.sendHeader("Set-Cookie", "sid=; Path=/; Max-Age=0");
-    server.sendHeader("Location", "/");
-    server.send(303);
+    web->sendHeader("Set-Cookie", "sid=; Path=/; Max-Age=0");
+    web->sendHeader("Location", homePath());
+    web->send(303);
 }
 
 static void handleStatus() {
@@ -316,27 +371,21 @@ static void handleStatus() {
              ethLink ? ETH.linkSpeed() : 0, (ethLink && ETH.fullDuplex()) ? "true" : "false",
              ETH.macAddress().c_str(), macToString(savedMac).c_str(), macToString(defaultMac).c_str(),
              wifiOk ? "true" : "false", ssid.c_str(), wifiIp.c_str(), wifiOk ? WiFi.RSSI() : 0);
-    server.send(200, "application/json", json);
+    web->send(200, "application/json", json);
 }
 
 static void handleConfig() {
     if (!requireAuth()) return;
-    String newHost = server.arg("hostname");
+    String newHost = web->arg("hostname");
     newHost.trim();
     uint8_t newMac[6];
 
     if (!validHostname(newHost)) {
-        server.send(400, "text/plain", "Błędna nazwa: dozwolone litery, cyfry i '-', max 32 znaki.");
+        web->send(400, "text/plain", "Błędna nazwa: dozwolone litery, cyfry i '-', max 32 znaki.");
         return;
     }
-    if (!parseMac(server.arg("mac"), newMac)) {
-        server.send(400, "text/plain", "Błędny format MAC (np. AA:BB:CC:DD:EE:FF).");
-        return;
-    }
-    uint8_t base[6];
-    macAdd(newMac, -3, base);
-    if ((newMac[0] & 0x01) || (base[0] & 0x01)) {
-        server.send(400, "text/plain", "MAC musi być adresem unicast (pierwszy bajt parzysty).");
+    if (const char *err = checkEthMac(web->arg("mac"), newMac)) {
+        web->send(400, "text/plain", err);
         return;
     }
 
@@ -347,18 +396,92 @@ static void handleConfig() {
     prefs.end();
 
     Serial.printf("[CFG] zapisano: hostname=%s, MAC=%s\n", newHost.c_str(), macToString(newMac).c_str());
-    server.send(200, "text/plain", "Zapisano. Restart urządzenia...");
+    web->send(200, "text/plain", "Zapisano. Restart urządzenia...");
     restartAt = millis() + 1000;
+}
+
+static String jsonEsc(const String &in) {
+    String out;
+    for (char c : in) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+static void handleProfiles() {
+    if (!requireAuth()) return;
+    String json = "[";
+    for (size_t i = 0; i < profiles.size(); i++) {
+        if (i) json += ',';
+        json += "{\"label\":\"" + jsonEsc(profiles[i].label) + "\",\"hostname\":\"" + profiles[i].host +
+                "\",\"mac\":\"" + profiles[i].mac + "\"}";
+    }
+    json += "]";
+    web->send(200, "application/json", json);
+}
+
+static void handleProfileSave() {
+    if (!requireAuth()) return;
+    String label = web->arg("label");
+    label.trim();
+    String host = web->arg("hostname");
+    host.trim();
+    uint8_t mac[6];
+
+    for (char c : label)
+        if ((uint8_t)c < 0x20) {
+            web->send(400, "text/plain", "Podpis zawiera niedozwolone znaki.");
+            return;
+        }
+    if (label.isEmpty() || label.length() > MAX_LABEL_LEN) {
+        web->send(400, "text/plain", "Podpis profilu: od 1 do 32 znaków.");
+        return;
+    }
+    if (!validHostname(host)) {
+        web->send(400, "text/plain", "Błędna nazwa: dozwolone litery, cyfry i '-', max 32 znaki.");
+        return;
+    }
+    if (const char *err = checkEthMac(web->arg("mac"), mac)) {
+        web->send(400, "text/plain", err);
+        return;
+    }
+
+    Profile p{label, host, macToString(mac)};
+    int idx = findProfile(label);
+    if (idx >= 0) {
+        profiles[idx] = p;
+    } else if (profiles.size() >= MAX_PROFILES) {
+        web->send(400, "text/plain", "Osiągnięto limit 10 profili – usuń któryś.");
+        return;
+    } else {
+        profiles.push_back(p);
+    }
+    saveProfiles();
+    Serial.printf("[PRF] zapisano profil \"%s\": %s, %s\n", label.c_str(), host.c_str(), p.mac.c_str());
+    web->send(200, "text/plain", idx >= 0 ? "Profil nadpisany." : "Profil zapisany.");
+}
+
+static void handleProfileDelete() {
+    if (!requireAuth()) return;
+    int idx = findProfile(web->arg("label"));
+    if (idx < 0) {
+        web->send(404, "text/plain", "Nie ma takiego profilu.");
+        return;
+    }
+    profiles.erase(profiles.begin() + idx);
+    saveProfiles();
+    web->send(200, "text/plain", "Profil usunięty.");
 }
 
 static void handleSchedule() {
     if (!requireAuth()) return;
     uint16_t on, off;
-    if (!parseHHMM(server.arg("on"), on) || !parseHHMM(server.arg("off"), off)) {
-        server.send(400, "text/plain", "Błędny format godziny (HH:MM).");
+    if (!parseHHMM(web->arg("on"), on) || !parseHHMM(web->arg("off"), off)) {
+        web->send(400, "text/plain", "Błędny format godziny (HH:MM).");
         return;
     }
-    schedEnabled = server.arg("enabled") == "1";
+    schedEnabled = web->arg("enabled") == "1";
     ethOnMin = on;
     ethOffMin = off;
 
@@ -370,12 +493,12 @@ static void handleSchedule() {
 
     Serial.printf("[SCH] harmonogram %s: %s - %s\n", schedEnabled ? "włączony" : "wyłączony",
                   minToStr(ethOnMin).c_str(), minToStr(ethOffMin).c_str());
-    server.send(200, "text/plain", "Harmonogram zapisany.");
+    web->send(200, "text/plain", "Harmonogram zapisany.");
 }
 
 // Aktualizacja OTA: plik .bin wysyłany ze strony (multipart) zapisywany do drugiej partycji aplikacji.
 static void handleUpdateUpload() {
-    HTTPUpload &up = server.upload();
+    HTTPUpload &up = web->upload();
     switch (up.status) {
         case UPLOAD_FILE_START:
             otaAuthorized = isAuthed();
@@ -402,43 +525,59 @@ static void handleUpdateUpload() {
 static void handleUpdateDone() {
     if (!requireAuth()) return;
     if (Update.hasError() || !Update.isFinished()) {
-        server.send(500, "text/plain", String("Błąd aktualizacji: ") + Update.errorString());
+        web->send(500, "text/plain", String("Błąd aktualizacji: ") + Update.errorString());
         return;
     }
-    server.send(200, "text/plain", "Firmware wgrany. Restart urządzenia...");
+    web->send(200, "text/plain", "Firmware wgrany. Restart urządzenia...");
     restartAt = millis() + 1000;
 }
 
 static void handleReboot() {
     if (!requireAuth()) return;
-    server.send(200, "text/plain", "Restart urządzenia...");
+    web->send(200, "text/plain", "Restart urządzenia...");
     restartAt = millis() + 1000;
 }
 
 static void handleWifiReset() {
     if (!requireAuth()) return;
-    server.send(200, "text/plain", "Sieć WiFi skasowana. Połącz się z AP \"" + hostname + "-setup\" (hasło: " +
+    web->send(200, "text/plain", "Sieć WiFi skasowana. Połącz się z AP \"" + hostname + "-setup\" (hasło: " +
                                        PORTAL_PASSWORD + ").");
     wm.resetSettings();
     restartAt = millis() + 1500;
 }
 
-static void startServer() {
+// Trasy kokpitu i API – wspólne dla naszego serwera i serwera portalu WiFiManagera.
+static void addRoutes(WebServer &s, const char *home) {
     const char *headers[] = {"Cookie"};
-    server.collectHeaders(headers, 1);
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/login", HTTP_POST, handleLogin);
-    server.on("/logout", HTTP_GET, handleLogout);
-    server.on("/api/status", HTTP_GET, handleStatus);
-    server.on("/api/config", HTTP_POST, handleConfig);
-    server.on("/api/schedule", HTTP_POST, handleSchedule);
-    server.on("/api/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
-    server.on("/api/reboot", HTTP_POST, handleReboot);
-    server.on("/api/wifireset", HTTP_POST, handleWifiReset);
+    s.collectHeaders(headers, 1);
+    s.on(home, HTTP_GET, handleRoot);
+    s.on("/login", HTTP_POST, handleLogin);
+    s.on("/logout", HTTP_GET, handleLogout);
+    s.on("/api/status", HTTP_GET, handleStatus);
+    s.on("/api/config", HTTP_POST, handleConfig);
+    s.on("/api/schedule", HTTP_POST, handleSchedule);
+    s.on("/api/profiles", HTTP_GET, handleProfiles);
+    s.on("/api/profiles/save", HTTP_POST, handleProfileSave);
+    s.on("/api/profiles/delete", HTTP_POST, handleProfileDelete);
+    s.on("/api/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
+    s.on("/api/reboot", HTTP_POST, handleReboot);
+    s.on("/api/wifireset", HTTP_POST, handleWifiReset);
+}
+
+static void startServer() {
+    web = &server;
+    addRoutes(server, "/");
     server.onNotFound([] { server.send(404, "text/plain", "Not found"); });
     server.begin();
     serverStarted = true;
     Serial.println("[WWW] serwer uruchomiony na porcie 80");
+}
+
+// Wywoływane przez WiFiManager po utworzeniu serwera portalu, przed dodaniem jego tras
+// (pierwsza pasująca trasa wygrywa, więc nie rejestrujemy "/").
+static void bindPortalRoutes() {
+    web = wm.server.get();
+    addRoutes(*wm.server, "/panel");
 }
 
 // ---------------------------------------------------------------- LED
@@ -480,6 +619,7 @@ void setup() {
     led.show();
 
     loadSettings();
+    loadProfiles();
     if (customMac && !applyEthMac(savedMac)) {
         Serial.println("[MAC] nie udało się ustawić MAC, używam fabrycznego");
         memcpy(savedMac, defaultMac, 6);
@@ -503,7 +643,13 @@ void setup() {
     wm.setConfigPortalBlocking(false);
     wm.setConfigPortalTimeout(PORTAL_TIMEOUT_S);
     wm.setConnectTimeout(20);
+    wm.setAPClientCheck(true);   // portal nie zamyka się, dopóki ktoś jest połączony z AP
     wm.setTitle("WT32-ETH01");
+    // Przycisk w menu portalu prowadzący do kokpitu (harmonogram, MAC, nazwa, OTA).
+    wm.setWebServerCallback(bindPortalRoutes);
+    wm.setCustomMenuHTML("<form action='/panel' method='get'><button>Panel urządzenia</button></form><br/>");
+    std::vector<const char *> menu = {"wifi", "info", "custom", "exit", "sep", "update"};
+    wm.setMenu(menu);
     String apName = hostname + "-setup";
     if (wm.autoConnect(apName.c_str(), PORTAL_PASSWORD)) {
         Serial.println("[WiFi] połączono");
